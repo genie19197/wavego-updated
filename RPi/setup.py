@@ -125,34 +125,38 @@ def configure_boot():
 
 
 def install_apt_packages():
-    packages = [
+    # Keep this list to packages that exist on Bookworm and Trixie.
+    # libatlas-base-dev was dropped; OpenBLAS replaced it.
+    required = [
         "python3-venv",
         "python3-pip",
         "python3-dev",
         "python3-opencv",
         "python3-numpy",
-        "python3-smbus",
         "i2c-tools",
         "libfreetype6-dev",
         "libjpeg-dev",
         "build-essential",
-        "libatlas-base-dev",
-        "libhdf5-dev",
         "network-manager",
         "util-linux",
         "procps",
         "iproute2",
         "iw",
     ]
-    run("apt update")
-    if not run("apt-get install -y " + " ".join(packages)):
-        raise SystemExit("Failed to install apt packages")
-    for pkg in (
+    optional = [
+        "libopenblas-dev",
+        "libhdf5-dev",
+        "python3-smbus",
+        "python3-smbus2",
         "python3-libcamera",
         "python3-picamera2",
         "libcamera-apps",
         "rpicam-apps",
-    ):
+    ]
+    run("apt update")
+    if not run("apt-get install -y " + " ".join(required)):
+        raise SystemExit("Failed to install required apt packages")
+    for pkg in optional:
         run("apt-get install -y " + pkg, tries=1)
 
 
