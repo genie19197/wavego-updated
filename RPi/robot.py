@@ -1,11 +1,41 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # File name   : robot.py
 # Description : Robot interfaces.
+import os
 import time
 import json
 import serial
 
-ser = serial.Serial("/dev/ttyS0",115200)
+def open_serial():
+	candidates = []
+	env_port = os.environ.get('WAVEGO_SERIAL')
+	if env_port:
+		candidates.append(env_port)
+	# /dev/serial0 is the stable UART alias on Raspberry Pi.
+	# Pi 5 GPIO 14/15 is typically /dev/ttyAMA0, not /dev/ttyS0.
+	candidates.extend(['/dev/serial0', '/dev/ttyAMA0', '/dev/ttyS0'])
+	last_error = None
+	seen = set()
+	for port in candidates:
+		if not port or port in seen:
+			continue
+		seen.add(port)
+		if not os.path.exists(port):
+			print('UART skip (missing):', port)
+			continue
+		try:
+			conn = serial.Serial(port, 115200, timeout=1)
+			print('UART opened:', port)
+			return conn
+		except Exception as exc:
+			last_error = exc
+			print('UART open failed:', port, exc)
+	raise RuntimeError(
+		'Could not open UART (%s). Enable UART (dtparam=uart0=on) and reboot.'
+		% last_error
+	)
+
+ser = open_serial()
 dataCMD = json.dumps({'var':"", 'val':0, 'ip':""})
 upperGlobalIP = 'UPPER IP'
 

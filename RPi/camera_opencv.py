@@ -9,9 +9,9 @@ import threading
 import imutils
 
 curpath = os.path.realpath(__file__)
-thisPath = "/" + os.path.dirname(curpath)
+thisPath = os.path.dirname(curpath)
 
-faceCascade = cv2.CascadeClassifier(thisPath + '/haarcascade_frontalface_default.xml')
+faceCascade = cv2.CascadeClassifier(os.path.join(thisPath, 'haarcascade_frontalface_default.xml'))
 
 upperGlobalIP = 'UPPER IP'
 
@@ -483,19 +483,43 @@ class Camera(BaseCamera):
         Camera.video_source = source
 
     @staticmethod
+    def _open_picamera2():
+        from picamera2 import Picamera2
+        picam2 = Picamera2()
+        config = picam2.create_preview_configuration(
+            main={"size": (640, 480), "format": "RGB888"}
+        )
+        picam2.configure(config)
+        picam2.start()
+        return picam2
+
+    @staticmethod
     def frames():
-        camera = cv2.VideoCapture(Camera.video_source)
-        camera.set(3, 640)
-        camera.set(4, 480)
-        if not camera.isOpened():
-            raise RuntimeError('Could not start camera.')
+        picam2 = None
+        camera = None
+        try:
+            picam2 = Camera._open_picamera2()
+            print('Camera: Picamera2 (libcamera)')
+        except Exception as exc:
+            print('Picamera2 unavailable (%s), falling back to OpenCV VideoCapture' % exc)
+            camera = cv2.VideoCapture(Camera.video_source)
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            if not camera.isOpened():
+                raise RuntimeError('Could not start camera. Check the CSI cable or USB webcam.')
 
         cvt = CVThread()
         cvt.start()
 
         while True:
             # read current frame
-            _, img = camera.read()
+            if picam2 is not None:
+                img = picam2.capture_array()
+            else:
+                ok, img = camera.read()
+                if not ok or img is None:
+                    time.sleep(0.05)
+                    continue
 
             if Camera.modeSelect == 'none':
                 cvt.pause()

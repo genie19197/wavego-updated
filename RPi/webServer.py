@@ -1,4 +1,4 @@
-#!/usr/bin/env/python
+#!/usr/bin/env python3
 # File name   : server.py
 # Production  : Upper Ctrl for Robots
 # Author	  : WaveShare
@@ -21,7 +21,8 @@ ipaddr_check = "192.168.4.1"
 
 
 def ap_thread():
-	os.system("sudo create_ap wlan0 eth0 WAVE_BOT 12345678")
+	# Bookworm uses NetworkManager. create_ap is unmaintained on Pi 5.
+	os.system("sudo nmcli device wifi hotspot ifname wlan0 ssid WAVE_BOT password 12345678")
 
 
 def wifi_check():
@@ -35,7 +36,7 @@ def wifi_check():
 		print(ipaddr_check)
 	except:
 		ap_threading=threading.Thread(target=ap_thread)   
-		ap_threading.setDaemon(True)                     
+		ap_threading.daemon = True
 		ap_threading.start()
 
 
@@ -138,9 +139,15 @@ async def recv_msg(websocket):
 		await websocket.send(response)
 
 
-async def main_logic(websocket, path):
+async def main_logic(websocket, path=None):
 	await check_permit(websocket)
 	await recv_msg(websocket)
+
+
+async def start_ws_server():
+	async with websockets.serve(main_logic, '0.0.0.0', 8888):
+		print('waiting for connection...')
+		await asyncio.Future()
 
 
 if __name__ == '__main__':
@@ -151,16 +158,9 @@ if __name__ == '__main__':
 	flask_app.startthread()
 	flask_app.sendIP(ipaddr_check)
 
-	while  1:
-		try:
-			start_server = websockets.serve(main_logic, '0.0.0.0', 8888)
-			asyncio.get_event_loop().run_until_complete(start_server)
-			print('waiting for connection...')
-			break
-		except Exception as e:
-			print(e)
-
 	try:
-		asyncio.get_event_loop().run_forever()
+		asyncio.run(start_ws_server())
+	except KeyboardInterrupt:
+		print('stopped')
 	except Exception as e:
 		print(e)

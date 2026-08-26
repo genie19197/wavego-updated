@@ -1,147 +1,256 @@
 #!/usr/bin/python3
-# File name   : setup.py for WAVEGO
+# File name   : setup.py for WAVEGO (Raspberry Pi 5 / Bookworm)
 # Date        : 2022/1/5
+# Updated     : 2026/8/27
 
+"""Install WAVEGO on Raspberry Pi OS Bookworm without using system pip.
+
+Raspberry Pi OS Bookworm marks the system Python as an externally-managed
+environment (PEP 668). Packages are installed into a project venv instead.
+"""
+
+import getpass
+import grp
 import os
-import time
+import pwd
 import re
+import shlex
+import sys
 
 curpath = os.path.realpath(__file__)
 thisPath = os.path.dirname(curpath)
-
-def replace_num(file,initial,new_num):  
-    newline=""
-    str_num=str(new_num)
-    with open(file,"r") as f:
-        for line in f.readlines():
-            if(line.find(initial) == 0):
-                line = (str_num+'\n')
-            newline += line
-    with open(file,"w") as f:
-        f.writelines(newline)
-
-for x in range(1,4):
-	if os.system("sudo apt update") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo apt -y dist-upgrade") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo apt clean") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo pip3 install -U pip") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo apt-get install -y python-dev python3-pip libfreetype6-dev libjpeg-dev build-essential") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo apt-get install -y i2c-tools") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo apt-get install -y python3-smbus") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo pip3 install pyserial") == 0:
-		break
-	elif os.system("sudo pip3 install -i http://pypi.douban.com/simple/ --trusted-host=pypi.douban.com/simple pyserial") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo pip3 install flask") == 0:
-		break
-	elif os.system("sudo pip3 install -i http://pypi.douban.com/simple/ --trusted-host=pypi.douban.com/simple flask") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo pip3 install flask_cors") == 0:
-		break
-	elif os.system("sudo pip3 install -i http://pypi.douban.com/simple/ --trusted-host=pypi.douban.com/simple flask_cors") == 0:
-		break
-
-for x in range(1,4):
-	if os.system("sudo pip3 install websockets") == 0:
-		break
-	elif os.system("sudo pip3 install -i http://pypi.douban.com/simple/ --trusted-host=pypi.douban.com/simple websockets") == 0:
-		break
-try:
-	replace_num("/boot/config.txt",'[all]','[all]\nenable_uart=1\ngpu_mem=128')
-except:
-	print('try again')
-
-try:
-	replace_num("/boot/config.txt",'camera_auto_detect=1','#camera_auto_detect=1\nstart_x=1')
-except:
-	print('try again')
-
-try:
-	replace_num("/boot/config.txt",'camera_auto_detect=1','#camera_auto_detect=1')
-except:
-	print('try again')
+venvPath = os.path.join(thisPath, ".venv")
+reqPath = os.path.join(thisPath, "requirements.txt")
+serviceName = "wavego.service"
+servicePath = os.path.join("/etc/systemd/system", serviceName)
 
 
-CMDLINE_FILE = open('/boot/cmdline.txt', 'r')
-OLD_LINES = CMDLINE_FILE.readlines()
-CMDLINE_FILE.close()
-
-CMDLINE_FILE = open('/boot/cmdline.txt', 'w+')
-for EACH_LINE in OLD_LINES:
-	NEW_LINES = re.sub('console=serial0,115200', '', EACH_LINE)
-	CMDLINE_FILE.writelines(NEW_LINES)
-
-CMDLINE_FILE.close()
+def log(msg):
+    print("[WAVEGO] " + msg, flush=True)
 
 
-for x in range(1,4):
-	if os.system("sudo pip3 install opencv-contrib-python==3.4.11.45") == 0:
-		break
-	elif os.system("sudo pip3 install -i http://pypi.douban.com/simple/ --trusted-host=pypi.douban.com/simple opencv-contrib-python==3.4.11.45") == 0:
-		break
+def run(cmd, tries=3):
+    for attempt in range(1, tries + 1):
+        log("run: " + cmd)
+        if os.system(cmd) == 0:
+            return True
+        log("failed (%d/%d): %s" % (attempt, tries, cmd))
+    return False
 
 
+def real_user():
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user and sudo_user != "root":
+        return sudo_user
+    user = os.environ.get("USER") or getpass.getuser()
+    if user and user != "root":
+        return user
+    return "pi"
 
-for x in range(1,4):
-	if os.system("sudo pip3 uninstall -y numpy") == 0:
-		break
 
-for x in range(1,4):
-	if os.system("sudo pip3 install numpy==1.21") == 0:
-		break
-	elif os.system("sudo pip3 install -i http://pypi.douban.com/simple/ --trusted-host=pypi.douban.com/simple numpy==1.21") == 0:
-		break
+def run_as_user(user, cmd, tries=3):
+    if os.geteuid() == 0 and user and user != "root":
+        wrapped = "sudo -u %s -H bash -lc %s" % (user, shlex.quote(cmd))
+        return run(wrapped, tries=tries)
+    return run(cmd, tries=tries)
 
-for x in range(1,4):
-	if os.system("sudo apt-get -y install libhdf5-dev libhdf5-serial-dev libatlas-base-dev libjasper-dev") == 0:
-		break
 
-for x in range(1,4):
-	if os.system("sudo pip3 install imutils zmq pybase64 psutil") == 0:
-		break
-	elif os.system("sudo pip3 install -i http://pypi.douban.com/simple/ --trusted-host=pypi.douban.com/simple imutils zmq pybase64 psutil") == 0:
-		break
+def boot_config_path():
+    for path in ("/boot/firmware/config.txt", "/boot/config.txt"):
+        if os.path.exists(path):
+            return path
+    return "/boot/firmware/config.txt"
 
-for x in range(1,4):
-	if os.system("sudo apt-get install -y util-linux procps hostapd iproute2 iw haveged dnsmasq") == 0:
-		break
-        
-for x in range(1,4):
-	if os.system("cd " + thisPath + " && cd .. && sudo git clone https://github.com/oblique/create_ap") == 0:
-		break
 
-try:
-	os.system("cd " + thisPath + " && cd .. && cd create_ap && sudo make install")
-except:
-	pass
+def boot_cmdline_path():
+    for path in ("/boot/firmware/cmdline.txt", "/boot/cmdline.txt"):
+        if os.path.exists(path):
+            return path
+    return "/boot/firmware/cmdline.txt"
 
-replace_num('/etc/rc.local','exit 0','cd '+thisPath+' && sudo python3 webServer.py &\nexit 0')
 
-print('Completed!')
+def ensure_config_setting(path, setting, replace_prefix=None):
+    setting = setting.strip()
+    with open(path, "r") as handle:
+        lines = handle.readlines()
+    found = False
+    new_lines = []
+    for line in lines:
+        stripped = line.strip()
+        prefix_hit = False
+        if replace_prefix:
+            prefix_hit = stripped.startswith(replace_prefix) or stripped.startswith(
+                "#" + replace_prefix
+            )
+        if stripped == setting or stripped == "#" + setting or prefix_hit:
+            if not found:
+                new_lines.append(setting + "\n")
+                found = True
+            continue
+        new_lines.append(line)
+    if not found:
+        if new_lines and not new_lines[-1].endswith("\n"):
+            new_lines.append("\n")
+        new_lines.append(setting + "\n")
+    with open(path, "w") as handle:
+        handle.writelines(new_lines)
 
-os.system("sudo reboot")
+
+def disable_serial_console(path):
+    with open(path, "r") as handle:
+        text = handle.read()
+    text = re.sub(r"\s*console=serial0,\d+", "", text)
+    text = re.sub(r"\s*console=ttyAMA0,\d+", "", text)
+    with open(path, "w") as handle:
+        handle.write(text)
+
+
+def configure_boot():
+    config = boot_config_path()
+    cmdline = boot_cmdline_path()
+    log("boot config: " + config)
+    log("boot cmdline: " + cmdline)
+
+    # Pi 5 UART on GPIO 14/15. Keep libcamera auto-detect enabled.
+    ensure_config_setting(config, "enable_uart=1", replace_prefix="enable_uart=")
+    ensure_config_setting(config, "dtparam=uart0=on")
+    ensure_config_setting(
+        config, "camera_auto_detect=1", replace_prefix="camera_auto_detect="
+    )
+    disable_serial_console(cmdline)
+
+    run("raspi-config nonint do_serial_hw 0", tries=1)
+    run("raspi-config nonint do_serial_cons 1", tries=1)
+    run("raspi-config nonint do_i2c 0", tries=1)
+
+
+def install_apt_packages():
+    packages = [
+        "python3-venv",
+        "python3-pip",
+        "python3-dev",
+        "python3-opencv",
+        "python3-numpy",
+        "python3-smbus",
+        "i2c-tools",
+        "libfreetype6-dev",
+        "libjpeg-dev",
+        "build-essential",
+        "libatlas-base-dev",
+        "libhdf5-dev",
+        "network-manager",
+        "util-linux",
+        "procps",
+        "iproute2",
+        "iw",
+    ]
+    run("apt update")
+    if not run("apt-get install -y " + " ".join(packages)):
+        raise SystemExit("Failed to install apt packages")
+    for pkg in (
+        "python3-libcamera",
+        "python3-picamera2",
+        "libcamera-apps",
+        "rpicam-apps",
+    ):
+        run("apt-get install -y " + pkg, tries=1)
+
+
+def create_venv(user):
+    python_bin = os.path.join(venvPath, "bin", "python3")
+    pip_bin = os.path.join(venvPath, "bin", "pip")
+    if not os.path.exists(python_bin):
+        if not run_as_user(
+            user,
+            "python3 -m venv --system-site-packages %s" % shlex.quote(venvPath),
+        ):
+            raise SystemExit("Failed to create virtualenv at %s" % venvPath)
+    run_as_user(user, "%s -m pip install -U pip" % shlex.quote(python_bin))
+    if not run_as_user(
+        user,
+        "%s install -r %s" % (shlex.quote(pip_bin), shlex.quote(reqPath)),
+    ):
+        raise SystemExit("Failed to install Python packages into the venv")
+
+
+def add_user_groups(user):
+    for group in ("dialout", "video", "gpio", "i2c", "render", "input"):
+        run("usermod -aG %s %s" % (group, user), tries=1)
+
+
+def install_systemd_service(user):
+    python_bin = os.path.join(venvPath, "bin", "python3")
+    try:
+        group_name = grp.getgrgid(pwd.getpwnam(user).pw_gid).gr_name
+    except KeyError:
+        group_name = user
+
+    unit = """[Unit]
+Description=WAVEGO web and control server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={user}
+Group={group}
+SupplementaryGroups=dialout video gpio i2c render
+WorkingDirectory={workdir}
+ExecStart={python} {script}
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+""".format(
+        user=user,
+        group=group_name,
+        workdir=thisPath,
+        python=python_bin,
+        script=os.path.join(thisPath, "webServer.py"),
+    )
+    with open(servicePath, "w") as handle:
+        handle.write(unit)
+    run("systemctl daemon-reload", tries=1)
+    run("systemctl enable %s" % serviceName, tries=1)
+
+    sudoers = "/etc/sudoers.d/wavego"
+    with open(sudoers, "w") as handle:
+        handle.write("%s ALL=(ALL) NOPASSWD: /usr/bin/nmcli\n" % user)
+    os.chmod(sudoers, 0o440)
+
+
+def main():
+    if os.geteuid() != 0:
+        print("Run this script with sudo:")
+        print("  sudo python3 setup.py")
+        sys.exit(1)
+
+    user = real_user()
+    log("installing for user: " + user)
+    log("project path: " + thisPath)
+
+    install_apt_packages()
+    create_venv(user)
+    configure_boot()
+    add_user_groups(user)
+    install_systemd_service(user)
+
+    python_bin = os.path.join(venvPath, "bin", "python3")
+    print("")
+    print("Completed.")
+    print("Reboot is required so UART and group membership take effect:")
+    print("  sudo reboot")
+    print("")
+    print("After reboot, start the server:")
+    print("  sudo systemctl start wavego")
+    print("or:")
+    print("  sudo -u %s %s %s" % (user, python_bin, os.path.join(thisPath, "webServer.py")))
+    print("")
+    print("Web UI:  http://<pi-ip>:5000")
+    print("Login:   admin / 123456")
+
+
+if __name__ == "__main__":
+    main()

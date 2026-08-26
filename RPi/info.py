@@ -1,5 +1,6 @@
 #!/usr/bin/python3
 
+import os
 import psutil
 
 def get_cpu_tempfunc():
@@ -17,8 +18,15 @@ def get_cpu_tempfunc():
 
 def get_gpu_tempfunc():
     """ Return GPU temperature as a character string"""
-    res = os.popen('/opt/vc/bin/vcgencmd measure_temp').readline()
-    return res.replace("temp=", "")
+    for cmd in (
+        "vcgencmd measure_temp",
+        "/usr/bin/vcgencmd measure_temp",
+        "/opt/vc/bin/vcgencmd measure_temp",
+    ):
+        res = os.popen(cmd).readline()
+        if res:
+            return res.replace("temp=", "")
+    return "N/A"
 
 
 def get_cpu_use():
