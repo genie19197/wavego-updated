@@ -40,9 +40,15 @@ def wifi_check():
 		ap_threading.start()
 
 
+def _recv_text(message):
+	if isinstance(message, bytes):
+		return message.decode('utf-8')
+	return message
+
+
 async def check_permit(websocket):
 	while True:
-		recv_str = await websocket.recv()
+		recv_str = _recv_text(await websocket.recv())
 		cred_dict = recv_str.split(":")
 		if cred_dict[0] == "admin" and cred_dict[1] == "123456":
 			response_str = "Connected!"
@@ -62,7 +68,7 @@ async def recv_msg(websocket):
 		}
 
 		data = ''
-		data = await websocket.recv()
+		data = _recv_text(await websocket.recv())
 		try:
 			data = json.loads(data)
 		except Exception as e:

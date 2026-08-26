@@ -138,7 +138,18 @@ python3 webServer.py
 `dtparam=uart0=on` 이 `/boot/firmware/config.txt`에 있는지, `cmdline.txt`에 `console=serial0,115200` 이 없는지 확인한 뒤 재부팅하세요. 사용자는 `dialout` 그룹이어야 합니다.
 
 **웹 화면은 뜨는데 조작이 안 됨**  
-브라우저가 `8888` 포트에 연결할 수 있어야 합니다. 방화벽과 ESP32 펌웨어, UART 배선을 확인하세요.
+브라우저는 `8888` 포트로 WebSocket을 엽니다. 로그에 `UART opened: /dev/ttyAMA0` 가 보여야 합니다. Pi 5에서 `/dev/serial0` 이나 `/dev/ttyAMA10` 이면 디버그 헤더라 ESP32에 명령이 안 갑니다.
+
+```bash
+ls -l /dev/serial0 /dev/ttyAMA0 /dev/ttyAMA10
+journalctl -u wavego -n 50
+```
+
+GPIO UART가 꺼져 있으면 `/boot/firmware/config.txt`에 `dtparam=uart0=on` 을 넣고 재부팅하세요. 포트를 강제할 때는:
+
+```bash
+export WAVEGO_SERIAL=/dev/ttyAMA0
+```
 
 **예전에 구버전 `setup.py`를 돌린 경우**  
 `/etc/rc.local`에 `webServer.py` 실행 줄이 남아 있으면 지우세요. 지금은 systemd `wavego.service`가 대신합니다. `/boot/firmware/config.txt`의 `start_x=1` 과 `#camera_auto_detect=1` 도 원래대로 되돌리세요.

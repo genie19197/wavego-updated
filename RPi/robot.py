@@ -4,16 +4,32 @@
 import os
 import time
 import json
+import threading
 import serial
+
+_serial_lock = threading.Lock()
+_last_buzzer = None
+
+
+def _is_pi5():
+	try:
+		with open('/proc/device-tree/model', 'rb') as handle:
+			return b'Raspberry Pi 5' in handle.read()
+	except Exception:
+		return False
+
 
 def open_serial():
 	candidates = []
 	env_port = os.environ.get('WAVEGO_SERIAL')
 	if env_port:
 		candidates.append(env_port)
-	# /dev/serial0 is the stable UART alias on Raspberry Pi.
-	# Pi 5 GPIO 14/15 is typically /dev/ttyAMA0, not /dev/ttyS0.
-	candidates.extend(['/dev/serial0', '/dev/ttyAMA0', '/dev/ttyS0'])
+	# Pi 5: GPIO 14/15 is /dev/ttyAMA0. /dev/serial0 is the 3-pin debug UART
+	# (/dev/ttyAMA10), which is NOT wired to the WAVEGO ESP32.
+	if _is_pi5():
+		candidates.extend(['/dev/ttyAMA0', '/dev/serial0', '/dev/ttyS0'])
+	else:
+		candidates.extend(['/dev/serial0', '/dev/ttyAMA0', '/dev/ttyS0'])
 	last_error = None
 	seen = set()
 	for port in candidates:
@@ -23,15 +39,19 @@ def open_serial():
 		if not os.path.exists(port):
 			print('UART skip (missing):', port)
 			continue
+		real = os.path.realpath(port)
+		if os.path.basename(real) == 'ttyAMA10':
+			print('UART skip (Pi 5 debug header):', port, '->', real)
+			continue
 		try:
 			conn = serial.Serial(port, 115200, timeout=1)
-			print('UART opened:', port)
+			print('UART opened:', port, '->', real)
 			return conn
 		except Exception as exc:
 			last_error = exc
 			print('UART open failed:', port, exc)
 	raise RuntimeError(
-		'Could not open UART (%s). Enable UART (dtparam=uart0=on) and reboot.'
+		'Could not open UART (%s). Enable GPIO UART with dtparam=uart0=on and reboot.'
 		% last_error
 	)
 
@@ -43,87 +63,83 @@ upperGlobalIP = 'UPPER IP'
 pitch, roll = 0, 0
 
 
+def send_cmd(var, val):
+	payload = json.dumps({'var': var, 'val': val}) + '\n'
+	with _serial_lock:
+		ser.write(payload.encode())
+		ser.flush()
+
+
 def setUpperIP(ipInput):
 	global upperGlobalIP
 	upperGlobalIP = ipInput
 
 def forward(speed=100):
-	dataCMD = json.dumps({'var':"move", 'val':1})
-	ser.write(dataCMD.encode())
+	send_cmd('move', 1)
 	print('robot-forward')
 
 def backward(speed=100):
-	dataCMD = json.dumps({'var':"move", 'val':5})
-	ser.write(dataCMD.encode())
+	send_cmd('move', 5)
 	print('robot-backward')
 
 def left(speed=100):
-	dataCMD = json.dumps({'var':"move", 'val':2})
-	ser.write(dataCMD.encode())
+	send_cmd('move', 2)
 	print('robot-left')
 
 def right(speed=100):
-	dataCMD = json.dumps({'var':"move", 'val':4})
-	ser.write(dataCMD.encode())
+	send_cmd('move', 4)
 	print('robot-right')
 
 def stopLR():
-	dataCMD = json.dumps({'var':"move", 'val':6})
-	ser.write(dataCMD.encode())
+	send_cmd('move', 6)
 	print('robot-stop')
 
 def stopFB():
-	dataCMD = json.dumps({'var':"move", 'val':3})
-	ser.write(dataCMD.encode())
+	send_cmd('move', 3)
 	print('robot-stop')
 
 
 
+def speedSet(speed=100):
+	print('robot-speed', speed)
+
+
 def lookUp():
-	dataCMD = json.dumps({'var':"ges", 'val':1})
-	ser.write(dataCMD.encode())
+	send_cmd('ges', 1)
 	print('robot-lookUp')
 
 def lookDown():
-	dataCMD = json.dumps({'var':"ges", 'val':2})
-	ser.write(dataCMD.encode())
+	send_cmd('ges', 2)
 	print('robot-lookDown')
 
 def lookStopUD():
-	dataCMD = json.dumps({'var':"ges", 'val':3})
-	ser.write(dataCMD.encode())
+	send_cmd('ges', 3)
 	print('robot-lookStopUD')
 
 def lookLeft():
-	dataCMD = json.dumps({'var':"ges", 'val':4})
-	ser.write(dataCMD.encode())
+	send_cmd('ges', 4)
 	print('robot-lookLeft')
 
 def lookRight():
-	dataCMD = json.dumps({'var':"ges", 'val':5})
-	ser.write(dataCMD.encode())
+	send_cmd('ges', 5)
 	print('robot-lookRight')
 
 def lookStopLR():
-	dataCMD = json.dumps({'var':"ges", 'val':6})
-	ser.write(dataCMD.encode())
+	send_cmd('ges', 6)
 	print('robot-lookStopLR')
 
 
 
 def steadyMode():
-	dataCMD = json.dumps({'var':"funcMode", 'val':1})
-	ser.write(dataCMD.encode())
+	send_cmd('funcMode', 1)
 	print('robot-steady')
 
 def jump():
-	dataCMD = json.dumps({'var':"funcMode", 'val':4})
-	ser.write(dataCMD.encode())
+	send_cmd('funcMode', 4)
 	print('robot-jump')
 
 def handShake():
-	dataCMD = json.dumps({'var':"funcMode", 'val':3})
-	ser.write(dataCMD.encode())
+	send_cmd('funcMode', 3)
 	print('robot-handshake')
 
 
@@ -146,20 +162,19 @@ def lightCtrl(colorName, cmdInput):
 		colorNum = 6
 	elif colorName == 'cyber':
 		colorNum = 7
-	dataCMD = json.dumps({'var':"light", 'val':colorNum})
-	ser.write(dataCMD.encode())
+	send_cmd('light', colorNum)
 
 
 def buzzerCtrl(buzzerCtrl, cmdInput):
-	dataCMD = json.dumps({'var':"buzzer", 'val':buzzerCtrl})
-	ser.write(dataCMD.encode())
+	global _last_buzzer
+	if buzzerCtrl == _last_buzzer:
+		return
+	_last_buzzer = buzzerCtrl
+	send_cmd('buzzer', buzzerCtrl)
 
 
 
 if __name__ == '__main__':
-    # robotCtrl.moveStart(100, 'forward', 'no', 0)
-    # time.sleep(3)
-    # robotCtrl.moveStop()
-    while 1:
-        time.sleep(1)
-        pass
+	while 1:
+		time.sleep(1)
+		pass

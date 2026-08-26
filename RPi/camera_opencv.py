@@ -523,7 +523,6 @@ class Camera(BaseCamera):
 
             if Camera.modeSelect == 'none':
                 cvt.pause()
-                robot.buzzerCtrl(0, 0)
             else:
                 if cvt.CVThreading:
                     pass

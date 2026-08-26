@@ -160,6 +160,15 @@ def install_apt_packages():
         run("apt-get install -y " + pkg, tries=1)
 
 
+def venv_imports_ok(user, python_bin):
+    check = (
+        "%s -c \"import flask, flask_cors, serial, websockets, imutils, psutil; "
+        "print('venv imports ok')\""
+        % shlex.quote(python_bin)
+    )
+    return run_as_user(user, check, tries=1)
+
+
 def create_venv(user):
     python_bin = os.path.join(venvPath, "bin", "python3")
     pip_bin = os.path.join(venvPath, "bin", "pip")
@@ -170,11 +179,21 @@ def create_venv(user):
         ):
             raise SystemExit("Failed to create virtualenv at %s" % venvPath)
     run_as_user(user, "%s -m pip install -U pip" % shlex.quote(python_bin))
-    if not run_as_user(
+    # Ignore leftover system type-stubs (e.g. types-flask-migrate) that are
+    # unrelated to WAVEGO but make pip print a dependency conflict ERROR.
+    run_as_user(
+        user,
+        "%s uninstall -y types-flask-migrate" % shlex.quote(pip_bin),
+        tries=1,
+    )
+    pip_ok = run_as_user(
         user,
         "%s install -r %s" % (shlex.quote(pip_bin), shlex.quote(reqPath)),
-    ):
+    )
+    if not venv_imports_ok(user, python_bin):
         raise SystemExit("Failed to install Python packages into the venv")
+    if not pip_ok:
+        log("pip reported a dependency warning; required WAVEGO packages imported OK")
 
 
 def add_user_groups(user):
