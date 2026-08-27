@@ -75,14 +75,19 @@ pitch, roll = 0, 0
 
 # WAVEGO Pro: {"T":111,"FB":-1..1,"LR":-1..1}. Classic {"var":"move"} is ignored.
 # Pro also heartbeats — it stops unless T:111 keeps arriving.
+# UI must keep sending forward/left/… while held. If none arrive, deadman stops.
 _move_lock = threading.Lock()
 _fb = 0.0
 _lr = 0.0
 _speed = 100
-_last_fb_set = 0.0
-_last_lr_set = 0.0
+_last_dir_cmd = 0.0
 _last_telemetry_log = 0.0
-_STOP_BOUNCE_S = 0.45
+_DEADMAN_S = 0.8
+_pan = 0.0
+_tilt = 0.0
+_LOOK_STEP_PAN = 18.0
+_LOOK_STEP_TILT = 6.0
+_steady = False
 
 
 def _drain_uart(force_log=False):
@@ -125,12 +130,28 @@ def _send_vector(reason='hold'):
 	_write_json(payload)
 
 
+def _send_look():
+	with _move_lock:
+		pan = round(_pan, 1)
+		tilt = round(_tilt, 1)
+	payload = {'T': 133, 'X': pan, 'Y': tilt}
+	print('UART send Pro look:', payload)
+	_write_json(payload)
+
+
 def _repeater():
 	while True:
-		time.sleep(0.2)
+		time.sleep(0.15)
 		with _move_lock:
 			moving = _fb != 0.0 or _lr != 0.0
-		if moving:
+			stale = moving and (time.time() - _last_dir_cmd) > _DEADMAN_S
+			if stale:
+				_fb = 0.0
+				_lr = 0.0
+		if stale:
+			print('deadman stop')
+			_send_vector('deadman')
+		elif moving:
 			_send_vector('hold')
 
 
@@ -148,44 +169,40 @@ def setUpperIP(ipInput):
 	upperGlobalIP = ipInput
 
 def forward(speed=100):
-	global _fb, _last_fb_set
+	global _fb, _last_dir_cmd
 	print('robot-forward')
 	with _move_lock:
 		_fb = 1.0
-		_last_fb_set = time.time()
+		_last_dir_cmd = time.time()
 	_send_vector('forward')
 
 def backward(speed=100):
-	global _fb, _last_fb_set
+	global _fb, _last_dir_cmd
 	print('robot-backward')
 	with _move_lock:
 		_fb = -1.0
-		_last_fb_set = time.time()
+		_last_dir_cmd = time.time()
 	_send_vector('backward')
 
 def left(speed=100):
-	global _lr, _last_lr_set
+	global _lr, _last_dir_cmd
 	print('robot-left')
 	with _move_lock:
 		_lr = -1.0
-		_last_lr_set = time.time()
+		_last_dir_cmd = time.time()
 	_send_vector('left')
 
 def right(speed=100):
-	global _lr, _last_lr_set
+	global _lr, _last_dir_cmd
 	print('robot-right')
 	with _move_lock:
 		_lr = 1.0
-		_last_lr_set = time.time()
+		_last_dir_cmd = time.time()
 	_send_vector('right')
 
 def stopLR():
 	global _lr
 	with _move_lock:
-		age = time.time() - _last_lr_set
-		if age < _STOP_BOUNCE_S:
-			print('ignore bounce TS (%.3fs)' % age)
-			return
 		_lr = 0.0
 	print('robot-stop TS')
 	_send_vector('TS')
@@ -193,10 +210,6 @@ def stopLR():
 def stopFB():
 	global _fb
 	with _move_lock:
-		age = time.time() - _last_fb_set
-		if age < _STOP_BOUNCE_S:
-			print('ignore bounce DS (%.3fs)' % age)
-			return
 		_fb = 0.0
 	print('robot-stop DS')
 	_send_vector('DS')
@@ -213,42 +226,56 @@ def speedSet(speed=100):
 
 
 def lookUp():
-	send_cmd('ges', 1)
+	global _tilt
+	with _move_lock:
+		_tilt = min(30.0, _tilt + _LOOK_STEP_TILT)
 	print('robot-lookUp')
+	_send_look()
 
 def lookDown():
-	send_cmd('ges', 2)
+	global _tilt
+	with _move_lock:
+		_tilt = max(-30.0, _tilt - _LOOK_STEP_TILT)
 	print('robot-lookDown')
+	_send_look()
 
 def lookStopUD():
-	send_cmd('ges', 3)
 	print('robot-lookStopUD')
 
 def lookLeft():
-	send_cmd('ges', 4)
+	global _pan
+	with _move_lock:
+		_pan = max(-180.0, _pan - _LOOK_STEP_PAN)
 	print('robot-lookLeft')
+	_send_look()
 
 def lookRight():
-	send_cmd('ges', 5)
+	global _pan
+	with _move_lock:
+		_pan = min(180.0, _pan + _LOOK_STEP_PAN)
 	print('robot-lookRight')
+	_send_look()
 
 def lookStopLR():
-	send_cmd('ges', 6)
 	print('robot-lookStopLR')
 
 
 
 def steadyMode():
-	send_cmd('funcMode', 1)
-	print('robot-steady')
+	global _steady
+	with _move_lock:
+		_steady = not _steady
+		on = _steady
+	print('robot-steady', 'on' if on else 'off')
+	_write_json({'T': 112, 'func': 4 if on else 5})
 
 def jump():
-	send_cmd('funcMode', 4)
 	print('robot-jump')
+	_write_json({'T': 112, 'func': 3})
 
 def handShake():
-	send_cmd('funcMode', 3)
 	print('robot-handshake')
+	_write_json({'T': 112, 'func': 2})
 
 
 
