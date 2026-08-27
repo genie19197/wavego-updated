@@ -122,6 +122,15 @@ def configure_boot():
     run("raspi-config nonint do_serial_hw 0", tries=1)
     run("raspi-config nonint do_serial_cons 1", tries=1)
     run("raspi-config nonint do_i2c 0", tries=1)
+    for unit in (
+        "serial-getty@ttyAMA0.service",
+        "serial-getty@ttyS0.service",
+        "serial-getty@serial0.service",
+        "serial-getty@ttyAMA10.service",
+    ):
+        run("systemctl stop %s" % unit, tries=1)
+        run("systemctl disable %s" % unit, tries=1)
+        run("systemctl mask %s" % unit, tries=1)
 
 
 def install_apt_packages():

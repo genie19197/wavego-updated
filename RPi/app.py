@@ -59,6 +59,12 @@ def sendgen(filename):
 def index():
     return send_from_directory(dir_path+'/dist', 'index.html')
 
+@app.route('/command/<path:cmd>')
+def http_command(cmd):
+    print('HTTP command:', cmd)
+    camera_opencv.commandAct(cmd, None)
+    return {'ok': True, 'cmd': cmd}
+
 class webapp:
     def __init__(self):
         self.camera = camera

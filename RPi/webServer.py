@@ -49,6 +49,7 @@ def _recv_text(message):
 async def check_permit(websocket):
 	while True:
 		recv_str = _recv_text(await websocket.recv())
+		print('WS auth message:', repr(recv_str))
 		cred_dict = recv_str.split(":")
 		if cred_dict[0] == "admin" and cred_dict[1] == "123456":
 			response_str = "Connected!"
@@ -68,7 +69,9 @@ async def recv_msg(websocket):
 		}
 
 		data = ''
-		data = _recv_text(await websocket.recv())
+		raw = _recv_text(await websocket.recv())
+		print('WS recv:', repr(raw))
+		data = raw
 		try:
 			data = json.loads(data)
 		except Exception as e:
@@ -78,7 +81,10 @@ async def recv_msg(websocket):
 			continue
 
 		if isinstance(data,str):
-			flask_app.commandInput(data)
+			try:
+				flask_app.commandInput(data)
+			except Exception as exc:
+				print('commandInput error:', repr(data), type(exc).__name__, exc)
 
 			if 'get_info' == data:
 				response['title'] = 'get_info'
@@ -145,15 +151,58 @@ async def recv_msg(websocket):
 		await websocket.send(response)
 
 
-async def main_logic(websocket, path=None):
-	await check_permit(websocket)
-	await recv_msg(websocket)
+async def client_handler(websocket, *args):
+	peer = getattr(websocket, 'remote_address', None)
+	print('WS client connected:', peer)
+	try:
+		await check_permit(websocket)
+		print('WS auth ok:', peer)
+		await recv_msg(websocket)
+	except Exception as exc:
+		print('WS client error:', peer, type(exc).__name__, exc)
+	finally:
+		print('WS client disconnected:', peer)
+
+
+def _ws_serve():
+	try:
+		from websockets.asyncio.server import serve
+		return serve
+	except ImportError:
+		pass
+	try:
+		from websockets.server import serve
+		return serve
+	except ImportError:
+		return websockets.serve
 
 
 async def start_ws_server():
-	async with websockets.serve(main_logic, '0.0.0.0', 8888):
+	serve = _ws_serve()
+	print('starting WebSocket server 0.0.0.0:8888 using', serve)
+	try:
+		server = serve(
+			client_handler,
+			'0.0.0.0',
+			8888,
+			ping_interval=None,
+			ping_timeout=None,
+		)
+	except TypeError:
+		server = serve(client_handler, '0.0.0.0', 8888)
+
+	if hasattr(server, '__aenter__'):
+		async with server:
+			print('waiting for connection...')
+			await asyncio.Future()
+	else:
+		started = await server
 		print('waiting for connection...')
-		await asyncio.Future()
+		try:
+			await asyncio.Future()
+		finally:
+			started.close()
+			await started.wait_closed()
 
 
 if __name__ == '__main__':
@@ -164,9 +213,12 @@ if __name__ == '__main__':
 	flask_app.startthread()
 	flask_app.sendIP(ipaddr_check)
 
-	try:
-		asyncio.run(start_ws_server())
-	except KeyboardInterrupt:
-		print('stopped')
-	except Exception as e:
-		print(e)
+	while True:
+		try:
+			asyncio.run(start_ws_server())
+		except KeyboardInterrupt:
+			print('stopped')
+			break
+		except Exception as e:
+			print('WebSocket server error:', type(e).__name__, e)
+			time.sleep(1)

@@ -44,7 +44,18 @@ def open_serial():
 			print('UART skip (Pi 5 debug header):', port, '->', real)
 			continue
 		try:
-			conn = serial.Serial(port, 115200, timeout=1)
+			conn = serial.Serial(
+				port=port,
+				baudrate=115200,
+				timeout=0.2,
+				write_timeout=1,
+				exclusive=True,
+				dsrdtr=False,
+				rtscts=False,
+				xonxoff=False,
+			)
+			conn.dtr = False
+			conn.rts = False
 			print('UART opened:', port, '->', real)
 			return conn
 		except Exception as exc:
@@ -64,10 +75,20 @@ pitch, roll = 0, 0
 
 
 def send_cmd(var, val):
-	payload = json.dumps({'var': var, 'val': val}) + '\n'
-	with _serial_lock:
-		ser.write(payload.encode())
-		ser.flush()
+	payload = json.dumps({'var': var, 'val': val}, separators=(',', ':')) + '\n'
+	try:
+		with _serial_lock:
+			if ser.in_waiting:
+				leftover = ser.read(ser.in_waiting)
+				print('UART leftover from ESP32:', leftover)
+			ser.write(payload.encode())
+			ser.flush()
+			time.sleep(0.05)
+			if ser.in_waiting:
+				reply = ser.read(ser.in_waiting)
+				print('UART from ESP32:', reply)
+	except Exception as exc:
+		print('UART write failed:', var, val, exc)
 
 
 def setUpperIP(ipInput):
@@ -75,8 +96,8 @@ def setUpperIP(ipInput):
 	upperGlobalIP = ipInput
 
 def forward(speed=100):
-	send_cmd('move', 1)
 	print('robot-forward')
+	send_cmd('move', 1)
 
 def backward(speed=100):
 	send_cmd('move', 5)
@@ -175,6 +196,8 @@ def buzzerCtrl(buzzerCtrl, cmdInput):
 
 
 if __name__ == '__main__':
-	while 1:
-		time.sleep(1)
-		pass
+	print('sending left for 3 seconds')
+	left()
+	time.sleep(3)
+	stopLR()
+	print('done')
