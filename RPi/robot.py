@@ -73,23 +73,74 @@ upperGlobalIP = 'UPPER IP'
 
 pitch, roll = 0, 0
 
+# WAVEGO Pro: {"T":111,"FB":-1..1,"LR":-1..1}. Classic {"var":"move"} is ignored.
+# Pro also heartbeats — it stops unless T:111 keeps arriving.
+_move_lock = threading.Lock()
+_fb = 0.0
+_lr = 0.0
+_speed = 100
+_last_fb_set = 0.0
+_last_lr_set = 0.0
+_last_telemetry_log = 0.0
+_STOP_BOUNCE_S = 0.45
 
-def send_cmd(var, val):
-	payload = json.dumps({'var': var, 'val': val}, separators=(',', ':')) + '\n'
+
+def _drain_uart(force_log=False):
+	global _last_telemetry_log
+	if not ser.in_waiting:
+		return
+	leftover = ser.read(ser.in_waiting)
+	if not leftover or not leftover.strip():
+		return
+	now = time.time()
+	is_telem = b'"T":1001' in leftover or leftover.strip().startswith(b'0,"v"')
+	if force_log or not is_telem or (now - _last_telemetry_log) > 3.0:
+		print('UART from ESP32:', leftover)
+		_last_telemetry_log = now
+
+
+def _write_json(payload):
+	line = json.dumps(payload, separators=(',', ':')) + '\n'
 	try:
 		with _serial_lock:
-			if ser.in_waiting:
-				leftover = ser.read(ser.in_waiting)
-				if leftover and leftover.strip():
-					print('UART leftover from ESP32:', leftover)
-			ser.write(payload.encode())
+			_drain_uart()
+			ser.write(line.encode())
 			ser.flush()
-			time.sleep(0.05)
-			if ser.in_waiting:
-				reply = ser.read(ser.in_waiting)
-				print('UART from ESP32:', reply)
 	except Exception as exc:
-		print('UART write failed:', var, val, exc)
+		print('UART write failed:', payload, exc)
+
+
+def _speed_scale():
+	# Slider 1-100 → 0.4-1.0. Speed 38 used to become 0.38, too slow to see.
+	return 0.4 + 0.6 * max(0.0, min(1.0, float(_speed) / 100.0))
+
+
+def _send_vector(reason='hold'):
+	with _move_lock:
+		fb = round(_fb * _speed_scale(), 3)
+		lr = round(_lr * _speed_scale(), 3)
+	payload = {'T': 111, 'FB': fb, 'LR': lr}
+	if reason != 'hold':
+		print('UART send Pro move:', payload, reason)
+	_write_json(payload)
+
+
+def _repeater():
+	while True:
+		time.sleep(0.2)
+		with _move_lock:
+			moving = _fb != 0.0 or _lr != 0.0
+		if moving:
+			_send_vector('hold')
+
+
+_repeat_thread = threading.Thread(target=_repeater, daemon=True)
+_repeat_thread.start()
+
+
+def send_cmd(var, val):
+	# Lights/buzzer/legacy. WAVEGO Pro ignores these.
+	_write_json({'var': var, 'val': val})
 
 
 def setUpperIP(ipInput):
@@ -97,33 +148,68 @@ def setUpperIP(ipInput):
 	upperGlobalIP = ipInput
 
 def forward(speed=100):
+	global _fb, _last_fb_set
 	print('robot-forward')
-	send_cmd('move', 1)
+	with _move_lock:
+		_fb = 1.0
+		_last_fb_set = time.time()
+	_send_vector('forward')
 
 def backward(speed=100):
-	send_cmd('move', 5)
+	global _fb, _last_fb_set
 	print('robot-backward')
+	with _move_lock:
+		_fb = -1.0
+		_last_fb_set = time.time()
+	_send_vector('backward')
 
 def left(speed=100):
-	send_cmd('move', 2)
+	global _lr, _last_lr_set
 	print('robot-left')
+	with _move_lock:
+		_lr = -1.0
+		_last_lr_set = time.time()
+	_send_vector('left')
 
 def right(speed=100):
-	send_cmd('move', 4)
+	global _lr, _last_lr_set
 	print('robot-right')
+	with _move_lock:
+		_lr = 1.0
+		_last_lr_set = time.time()
+	_send_vector('right')
 
 def stopLR():
-	send_cmd('move', 6)
-	print('robot-stop')
+	global _lr
+	with _move_lock:
+		age = time.time() - _last_lr_set
+		if age < _STOP_BOUNCE_S:
+			print('ignore bounce TS (%.3fs)' % age)
+			return
+		_lr = 0.0
+	print('robot-stop TS')
+	_send_vector('TS')
 
 def stopFB():
-	send_cmd('move', 3)
-	print('robot-stop')
-
+	global _fb
+	with _move_lock:
+		age = time.time() - _last_fb_set
+		if age < _STOP_BOUNCE_S:
+			print('ignore bounce DS (%.3fs)' % age)
+			return
+		_fb = 0.0
+	print('robot-stop DS')
+	_send_vector('DS')
 
 
 def speedSet(speed=100):
-	print('robot-speed', speed)
+	global _speed
+	with _move_lock:
+		_speed = int(speed)
+		moving = _fb != 0.0 or _lr != 0.0
+	print('robot-speed', _speed)
+	if moving:
+		_send_vector('speed')
 
 
 def lookUp():
