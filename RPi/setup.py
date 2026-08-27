@@ -161,6 +161,7 @@ def install_apt_packages():
         "python3-picamera2",
         "libcamera-apps",
         "rpicam-apps",
+        "libzbar0",
     ]
     run("apt update")
     if not run("apt-get install -y " + " ".join(required)):

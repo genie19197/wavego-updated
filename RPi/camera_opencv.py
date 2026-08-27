@@ -29,7 +29,9 @@ speedMove = 100
 _qr_detector = None
 _last_qr_seen = None
 _last_qr_log = 0.0
+_last_qr_idle_log = 0.0
 _handshake_done_for_sighting = False
+_pyzbar_decode = None
 
 
 def _get_qr_detector():
@@ -39,21 +41,90 @@ def _get_qr_detector():
     return _qr_detector
 
 
-def _decode_qr(img):
+def _get_pyzbar():
+    global _pyzbar_decode
+    if _pyzbar_decode is False:
+        return None
+    if _pyzbar_decode is None:
+        try:
+            from pyzbar.pyzbar import decode as zbar_decode
+            _pyzbar_decode = zbar_decode
+            print('QR: pyzbar enabled')
+        except Exception:
+            _pyzbar_decode = False
+            print('QR: OpenCV only (install python3-pyzbar for better reads)')
+    return None if _pyzbar_decode is False else _pyzbar_decode
+
+
+def _to_gray(img):
+    if img is None or getattr(img, 'size', 0) == 0:
+        return None
+    if len(img.shape) == 2:
+        return img
+    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+
+def _opencv_decode(gray):
     detector = _get_qr_detector()
-    texts = []
-    points = None
+    texts, points, found = [], None, False
     try:
-        ok, decoded, pts, _straight = detector.detectAndDecodeMulti(img)
+        ok, decoded, pts, _straight = detector.detectAndDecodeMulti(gray)
+        if pts is not None and len(pts):
+            found = True
         if ok and decoded:
             texts = [t for t in decoded if t]
             points = pts
+            if texts:
+                found = False
     except Exception:
-        data, pts, _straight = detector.detectAndDecode(img)
+        data, pts, _straight = detector.detectAndDecode(gray)
+        if pts is not None and len(np.atleast_1d(pts)):
+            found = True
         if data:
-            texts = [data]
-            points = pts
+            texts, points, found = [data], pts, False
+    return texts, points, found
+
+
+def _zbar_decode(gray):
+    zbar_decode = _get_pyzbar()
+    if zbar_decode is None:
+        return [], None
+    texts, quads = [], []
+    for obj in zbar_decode(gray):
+        data = obj.data.decode('utf-8', errors='replace')
+        if not data:
+            continue
+        texts.append(data)
+        if obj.polygon:
+            quads.append([[p.x, p.y] for p in obj.polygon[:4]])
+    points = np.array(quads, dtype=np.float32) if quads else None
     return texts, points
+
+
+def _decode_qr(img):
+    gray = _to_gray(img)
+    if gray is None:
+        return [], None, False
+
+    texts, points = _zbar_decode(gray)
+    if texts:
+        return texts, points, False
+
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    variants = [gray, clahe.apply(gray)]
+    h, w = gray.shape[:2]
+    if max(h, w) < 1100:
+        variants.append(cv2.resize(gray, None, fx=1.8, fy=1.8, interpolation=cv2.INTER_CUBIC))
+
+    found_undecoded = False
+    for variant in variants:
+        texts, points, undecoded = _opencv_decode(variant)
+        found_undecoded = found_undecoded or undecoded
+        if texts:
+            if variant.shape[0] != gray.shape[0] and points is not None:
+                points = np.asarray(points, dtype=np.float32) * (gray.shape[0] / float(variant.shape[0]))
+            return texts, points, False
+    return [], None, found_undecoded
 
 
 def _draw_qr(img, texts, points):
@@ -74,14 +145,20 @@ def _draw_qr(img, texts, points):
     return img
 
 
-def _log_qr(texts):
-    global _last_qr_seen, _last_qr_log, _handshake_done_for_sighting
+def _log_qr(texts, found_undecoded=False):
+    global _last_qr_seen, _last_qr_log, _last_qr_idle_log, _handshake_done_for_sighting
     now = time.time()
     if not texts:
         if _last_qr_seen is not None:
             print('QR lost')
             _last_qr_seen = None
         _handshake_done_for_sighting = False
+        if found_undecoded and (now - _last_qr_idle_log) > 2.0:
+            print('QR seen but not decoded — hold still, fill ~1/4 of the frame, avoid glare')
+            _last_qr_idle_log = now
+        elif (now - _last_qr_idle_log) > 8.0:
+            print('QR scanning (no code)')
+            _last_qr_idle_log = now
         return
     key = tuple(texts)
     if key != _last_qr_seen or (now - _last_qr_log) > 2.0:
@@ -553,7 +630,7 @@ class Camera(BaseCamera):
         from picamera2 import Picamera2
         picam2 = Picamera2()
         config = picam2.create_preview_configuration(
-            main={"size": (640, 480), "format": "RGB888"}
+            main={"size": (1280, 720), "format": "RGB888"}
         )
         picam2.configure(config)
         picam2.start()
@@ -569,8 +646,8 @@ class Camera(BaseCamera):
         except Exception as exc:
             print('Picamera2 unavailable (%s), falling back to OpenCV VideoCapture' % exc)
             camera = cv2.VideoCapture(Camera.video_source)
-            camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             if not camera.isOpened():
                 raise RuntimeError('Could not start camera. Check the CSI cable or USB webcam.')
 
@@ -593,8 +670,8 @@ class Camera(BaseCamera):
             qr_i += 1
             if qr_i % 4 == 0:
                 try:
-                    last_qr_texts, last_qr_points = _decode_qr(img)
-                    _log_qr(last_qr_texts)
+                    last_qr_texts, last_qr_points, undecoded = _decode_qr(img)
+                    _log_qr(last_qr_texts, undecoded)
                     if not last_qr_texts:
                         last_qr_points = None
                 except Exception as exc:
