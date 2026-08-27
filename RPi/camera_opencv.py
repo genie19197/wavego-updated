@@ -26,6 +26,77 @@ colorLower = np.array([24, 100, 100])
 
 speedMove = 100
 
+_qr_detector = None
+_last_qr_seen = None
+_last_qr_log = 0.0
+_handshake_done_for_sighting = False
+
+
+def _get_qr_detector():
+    global _qr_detector
+    if _qr_detector is None:
+        _qr_detector = cv2.QRCodeDetector()
+    return _qr_detector
+
+
+def _decode_qr(img):
+    detector = _get_qr_detector()
+    texts = []
+    points = None
+    try:
+        ok, decoded, pts, _straight = detector.detectAndDecodeMulti(img)
+        if ok and decoded:
+            texts = [t for t in decoded if t]
+            points = pts
+    except Exception:
+        data, pts, _straight = detector.detectAndDecode(img)
+        if data:
+            texts = [data]
+            points = pts
+    return texts, points
+
+
+def _draw_qr(img, texts, points):
+    if points is None:
+        return img
+    try:
+        quads = np.int32(points).reshape(-1, 4, 2)
+    except Exception:
+        return img
+    for i, quad in enumerate(quads):
+        cv2.polylines(img, [quad], True, (0, 255, 0), 2)
+        label = texts[i] if i < len(texts) and texts[i] else '?'
+        x, y = int(quad[0][0]), int(quad[0][1])
+        cv2.putText(
+            img, label[:48], (x, max(20, y - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA,
+        )
+    return img
+
+
+def _log_qr(texts):
+    global _last_qr_seen, _last_qr_log, _handshake_done_for_sighting
+    now = time.time()
+    if not texts:
+        if _last_qr_seen is not None:
+            print('QR lost')
+            _last_qr_seen = None
+        _handshake_done_for_sighting = False
+        return
+    key = tuple(texts)
+    if key != _last_qr_seen or (now - _last_qr_log) > 2.0:
+        print('QR detected:', ' | '.join(texts))
+        _last_qr_seen = key
+        _last_qr_log = now
+    if (not _handshake_done_for_sighting
+            and any('productItemId' in text for text in texts)):
+        _handshake_done_for_sighting = True
+        print('QR handshake: productItemId')
+        try:
+            robot.handShake()
+        except Exception as exc:
+            print('QR handshake failed:', exc)
+
 
 
 class CVThread(threading.Thread):
@@ -505,6 +576,9 @@ class Camera(BaseCamera):
 
         cvt = CVThread()
         cvt.start()
+        print('QR scanner on (journalctl -u wavego -f)')
+        qr_i = 0
+        last_qr_texts, last_qr_points = [], None
 
         while True:
             # read current frame
@@ -515,6 +589,17 @@ class Camera(BaseCamera):
                 if not ok or img is None:
                     time.sleep(0.05)
                     continue
+
+            qr_i += 1
+            if qr_i % 4 == 0:
+                try:
+                    last_qr_texts, last_qr_points = _decode_qr(img)
+                    _log_qr(last_qr_texts)
+                    if not last_qr_texts:
+                        last_qr_points = None
+                except Exception as exc:
+                    print('QR scan failed:', exc)
+            img = _draw_qr(img, last_qr_texts, last_qr_points)
 
             if Camera.modeSelect == 'none':
                 cvt.pause()
