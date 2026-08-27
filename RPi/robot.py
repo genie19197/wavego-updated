@@ -80,7 +80,8 @@ def send_cmd(var, val):
 		with _serial_lock:
 			if ser.in_waiting:
 				leftover = ser.read(ser.in_waiting)
-				print('UART leftover from ESP32:', leftover)
+				if leftover and leftover.strip():
+					print('UART leftover from ESP32:', leftover)
 			ser.write(payload.encode())
 			ser.flush()
 			time.sleep(0.05)

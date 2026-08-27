@@ -373,12 +373,7 @@ class CVThread(threading.Thread):
 
             self.__flag.wait()
             if self.CVMode == 'none':
-                robot.stopLR()
-                robot.stopFB()
-                robot.buzzerCtrl(0, 0)
-                robot.lightCtrl('blue', 0)
                 self.pause()
-                robot.buzzerCtrl(0, 0)
                 continue
 
             elif self.CVMode == 'findColor':
